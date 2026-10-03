@@ -36,7 +36,9 @@ Environment only:
 
 `.env.example` lists every variable with a placeholder. `DOMAIN`,
 `TRAEFIK_NETWORK_NAME` and `TRAEFIK_CERTRESOLVER` are read by
-`docker-compose.yml`, not by the bot.
+`docker-compose.yml`, not by the bot. The stack does not pass `LISTEN_ADDR` or
+`DATA_DIR`: the image fixes them (`:8080`, `/data`, the only path the container
+user owns).
 
 `PUBLIC_URL` is the base of both callbacks: recorders post to
 `PUBLIC_URL/events`, tr2outline to `PUBLIC_URL/notify`. `/events` is not
