@@ -217,17 +217,20 @@ func (b *Bot) joinTimeoutS(recorder string) int {
 	return b.cfg.JoinTimeoutS
 }
 
+func (b *Bot) recorderURL(recorder string) string {
+	if recorder == recorderMeet {
+		return b.cfg.MeetRecorderURL
+	}
+	return b.cfg.JitsiRecorderURL
+}
+
 // launch shows 🔴, sends POST /recordings and records the outcome. A refusal
 // or an unreachable recorder ends in the recorder_failed note and no 🔴.
 func (b *Bot) launch(ctx context.Context, job Job) {
 	if err := b.z.AddReaction(ctx, job.MessageID, recordingEmoji); err != nil {
 		slog.Error("adding the recording indicator failed", "job", job.ID, "err", err)
 	}
-	base := b.cfg.JitsiRecorderURL
-	if job.Recorder == recorderMeet {
-		base = b.cfg.MeetRecorderURL
-	}
-	err := requestRecording(ctx, base, b.cfg.RecorderSecret, recordingRequest{
+	err := requestRecording(ctx, b.recorderURL(job.Recorder), b.cfg.RecorderSecret, recordingRequest{
 		ID:           job.ID,
 		URL:          job.URL,
 		CallbackURL:  b.cfg.PublicURL + "/events",
@@ -238,8 +241,8 @@ func (b *Bot) launch(ctx context.Context, job Job) {
 		EmptyGraceS:  b.cfg.EmptyGraceS,
 	})
 	if ctx.Err() != nil {
-		// ponytail: shutdown mid-request leaves the job "starting"; the watchdog
-		// asks the recorder about it after the deadline.
+		// Shutdown mid-request leaves the job "starting"; the watchdog asks the
+		// recorder about it after the deadline.
 		return
 	}
 

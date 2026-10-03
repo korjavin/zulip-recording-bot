@@ -27,6 +27,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	bot := newBot(cfg, newZulip(cfg))
+	bot.startWatchdog(ctx)
 	go func() {
 		// Bad Zulip credentials stop the service instead of leaving it half-up.
 		if err := bot.Run(ctx); err != nil {
@@ -38,6 +39,7 @@ func main() {
 		slog.Error("zulip-recording-bot failed", "err", err)
 		os.Exit(1)
 	}
+	bot.wg.Wait() // recorder requests and the watchdog finish or roll back
 	slog.Info("zulip-recording-bot stopped")
 }
 
