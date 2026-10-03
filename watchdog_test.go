@@ -232,3 +232,20 @@ func TestWatchdogRetriesAfterAZulipFailure(t *testing.T) {
 		t.Errorf("job = %+v", j)
 	}
 }
+
+// An answer that could not be settled still breaks a miss streak.
+func TestWatchdogUnsettledAnswerResetsMisses(t *testing.T) {
+	f := newBotFixture(t)
+	r := newStatusRecorder(t, http.StatusNotFound, "")
+	now := f.overdue(t, r.URL)
+	f.bot.checkJobs(context.Background(), now)
+	f.bot.checkJobs(context.Background(), now)
+	r.mu.Lock()
+	r.status, r.body = http.StatusOK, `{"state":"failed","error":"recorder_failed"}`
+	r.mu.Unlock()
+	f.refuse.Store("503 POST /api/v1/messages")
+	f.bot.checkJobs(context.Background(), now)
+	if j := f.job(t, "100"); j.State != jobRunning || j.WatchdogMisses != 0 {
+		t.Errorf("job = %+v", j)
+	}
+}

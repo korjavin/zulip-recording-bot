@@ -59,6 +59,16 @@ func getRecording(ctx context.Context, base, secret, id string) (recordingRecord
 	return rec, err
 }
 
+// startWatchdog runs the watchdog under Bot.wg, so shutdown can wait for a
+// settlement (or its rollback) to finish.
+func (b *Bot) startWatchdog(ctx context.Context) {
+	b.wg.Add(1)
+	go func() {
+		defer b.wg.Done()
+		b.watchdog(ctx)
+	}()
+}
+
 // watchdog checks overdue jobs every watchdogInterval until ctx ends. Jobs
 // survive a restart as they are: the first pass right at startup picks up
 // whatever was running before.
@@ -115,6 +125,14 @@ func (b *Bot) checkJob(ctx context.Context, job Job, now time.Time) {
 	cur, err := loadJob(b.cfg.DataDir, job.ID)
 	if err != nil || !watched(cur) {
 		return
+	}
+	// Any answer breaks a miss streak, even one whose settling fails below.
+	if gerr == nil && cur.WatchdogMisses != 0 {
+		cur.WatchdogMisses = 0
+		if err := cur.save(b.cfg.DataDir); err != nil {
+			slog.Error("saving the job failed", "job", cur.ID, "err", err)
+			return
+		}
 	}
 	var ev recorderEvent
 	switch {
