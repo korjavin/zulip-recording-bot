@@ -6,3 +6,4 @@
 .beads/proxieddb/
 *.gate.lock*
 /zulip-recording-bot
+.env

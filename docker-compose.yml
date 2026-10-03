@@ -1,0 +1,71 @@
+services:
+  zulip-recording-bot:
+    # Placeholder tag. .github/workflows/deploy.yml rewrites this line with the
+    # commit SHA on the `deploy` branch, which is the branch Portainer watches.
+    image: ghcr.io/korjavin/zulip-recording-bot:latest
+    # Fixed name: recorders and the transcriber reach the bot by it on the
+    # shared network (PUBLIC_URL=http://zulip-recording-bot:8080).
+    container_name: zulip-recording-bot
+    # Every variable config.go reads except LISTEN_ADDR and DATA_DIR, which the
+    # image fixes (:8080, /data), passed through by name: Compose takes the
+    # values from .env next to this file, or from the stack environment when
+    # Portainer deploys this repo as a git stack. A variable left unset is not
+    # passed, so the image default stands. See .env.example.
+    environment:
+      - ZULIP_SITE
+      - ZULIP_BOT_EMAIL
+      - ZULIP_BOT_API_KEY
+      - PUBLIC_URL
+      - LOG_LEVEL
+      - RECORDER_SECRET
+      - JITSI_BASE_URL
+      - JITSI_RECORDER_URL
+      - MEET_RECORDER_URL
+      - BOT_DISPLAY_NAME
+      - JOIN_TIMEOUT_S
+      - MEET_JOIN_TIMEOUT_S
+      - MAX_DURATION_S
+      - EMPTY_GRACE_S
+      - MIN_RECORDING_S
+      - WEBHOOK_URL
+      - WEBHOOK_SECRET
+    volumes:
+      # The bot's own job state only — never audio, so it does not mount the
+      # shared recordings volume.
+      - zulip-recording-bot-data:/data
+    # No ports: recorders post /events over the shared network; Traefik fronts
+    # only POST /notify and GET /health on ${DOMAIN}.
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_NETWORK_NAME:-traefik}"
+
+      # HTTPS router
+      - "traefik.http.routers.zulip-recording-bot.rule=Host(`${DOMAIN}`) && (Path(`/notify`) || Path(`/health`))"
+      - "traefik.http.routers.zulip-recording-bot.entrypoints=websecure"
+      - "traefik.http.routers.zulip-recording-bot.tls=true"
+      - "traefik.http.routers.zulip-recording-bot.tls.certresolver=${TRAEFIK_CERTRESOLVER:-myresolver}"
+
+      # HTTP -> HTTPS redirect router
+      - "traefik.http.routers.zulip-recording-bot-http.rule=Host(`${DOMAIN}`) && (Path(`/notify`) || Path(`/health`))"
+      - "traefik.http.routers.zulip-recording-bot-http.entrypoints=web"
+      - "traefik.http.routers.zulip-recording-bot-http.middlewares=zulip-recording-bot-https"
+      - "traefik.http.middlewares.zulip-recording-bot-https.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.zulip-recording-bot-https.redirectscheme.permanent=true"
+
+      # Service loadbalancer configuration
+      - "traefik.http.services.zulip-recording-bot.loadbalancer.server.port=8080"
+      - "traefik.http.services.zulip-recording-bot.loadbalancer.healthcheck.path=/health"
+      - "traefik.http.services.zulip-recording-bot.loadbalancer.healthcheck.interval=30s"
+    restart: unless-stopped
+    # ponytail: no healthcheck — the distroless image has no curl/wget; Traefik
+    # already probes GET /health.
+
+volumes:
+  zulip-recording-bot-data:
+
+networks:
+  traefik:
+    external: true
+    name: ${TRAEFIK_NETWORK_NAME:-traefik}

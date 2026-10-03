@@ -22,3 +22,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t zulip-recording-bot .
+      - run: cp .env.example .env && docker compose config -q
