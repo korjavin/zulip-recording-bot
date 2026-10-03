@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -77,7 +79,7 @@ type botFixture struct {
 	jitsi, meet   *fakeRecorder
 	dataDir       string
 	reactedStream Message      // what GET /messages/{id} returns
-	refuse        atomic.Value // "METHOD path" Zulip answers with a 503
+	refuse        atomic.Value // "status METHOD path" Zulip answers with that error status
 }
 
 func newBotFixture(t *testing.T, statuses ...int) *botFixture {
@@ -101,8 +103,10 @@ func newBotFixture(t *testing.T, statuses ...int) *botFixture {
 			ok(w, string(b))
 			return
 		}
-		if f.refuse.Load() == r.Method+" "+r.URL.Path {
-			w.WriteHeader(http.StatusServiceUnavailable)
+		if code, which, _ := strings.Cut(fmt.Sprint(f.refuse.Load()), " "); which == r.Method+" "+r.URL.Path {
+			st, _ := strconv.Atoi(code)
+			w.WriteHeader(st)
+			io.WriteString(w, `{"result":"error","msg":"refused"}`)
 			return
 		}
 		ok(w, "")

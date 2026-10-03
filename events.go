@@ -79,7 +79,8 @@ func (b *Bot) serveEvents(w http.ResponseWriter, r *http.Request) {
 
 // applyEvent acts on one recorder event and records it in the job. A repeated
 // (id, event) is a no-op. Errors other than errUnknownJob leave the event
-// unrecorded, so a redelivery retries it.
+// unrecorded, so a redelivery retries it. The watchdog can feed it an event
+// rebuilt from GET /recordings/{id} the same way.
 //
 // ponytail: Bot.mu is held across the Zulip calls, so events and claims are
 // serialised bot-wide; per-job locks if that ever queues up.
@@ -109,57 +110,88 @@ func (b *Bot) applyEvent(ctx context.Context, ev recorderEvent) error {
 		return nil
 	}
 
+	prev := job
+	var indicate, unindicate, transcribe bool
+	var note string
 	switch ev.Event {
-	case evWaitingAdmission:
+	case evWaitingAdmission, evStarted:
+		// A failed job here is one whose POST /recordings answer never arrived:
+		// the recorder has it after all, so 🔴 comes back.
+		indicate = job.State == jobFailed
+		job.State, job.Error = jobRunning, ""
 		// Meet is DM-only and its guest waits in the lobby until someone admits it.
-		if job.Recorder == recorderMeet {
-			note := fmt.Sprintf("Asking to join %s as a guest — admit %s from the lobby.", path.Base(job.URL), b.cfg.BotDisplayName)
-			if err := b.notify(ctx, job, note); err != nil {
-				return err
-			}
+		if ev.Event == evWaitingAdmission && job.Recorder == recorderMeet {
+			note = fmt.Sprintf("Asking to join %s as a guest — admit %s from the lobby.", path.Base(job.URL), b.cfg.BotDisplayName)
 		}
-		job.State = jobRunning
-	case evStarted:
-		job.State = jobRunning // 🔴 is already on
 	case evFinished:
-		// 🔴 goes first: removing it again on a redelivery is a no-op, a second
-		// note is not.
-		if err := b.removeIndicator(ctx, job); err != nil {
-			return err
-		}
 		job.State, job.Error = jobFinished, ""
 		job.StartedAt, job.EndedAt, job.DurationS = ev.StartedAt, ev.EndedAt, ev.DurationS
 		job.Participants, job.Artifacts = ev.Participants, ev.Artifacts
+		unindicate = true
 		if ev.DurationS < float64(b.cfg.MinRecordingS) {
-			note := fmt.Sprintf("Recording too short (under %d s) — nothing to transcribe.", b.cfg.MinRecordingS)
-			if err := b.notify(ctx, job, note); err != nil {
-				return err
-			}
+			note = fmt.Sprintf("Recording too short (under %d s) — nothing to transcribe.", b.cfg.MinRecordingS)
 		} else {
-			b.handOff(job)
+			transcribe = true
 		}
 	case evFailed:
-		if err := b.removeIndicator(ctx, job); err != nil {
-			return err
-		}
 		job.State, job.Error = jobFailed, ev.Error
 		job.Artifacts = ev.Artifacts
-		if err := b.notify(ctx, job, b.failureNote(job)); err != nil {
-			return err
-		}
+		unindicate = true
+		note = b.failureNote(job)
 	default:
 		slog.Warn("unknown recorder event ignored", "job", job.ID, "event", ev.Event)
 		return nil
 	}
 
+	// The event is recorded before anyone is told, so a broken disk can never
+	// turn every redelivery into another note. A transient Zulip failure rolls
+	// the record back and the recorder's retry tries again.
 	job.LastEvent = ev.Event
 	job.Events = append(job.Events, ev.Event)
 	if err := job.save(b.cfg.DataDir); err != nil {
 		slog.Error("saving the job failed", "job", job.ID, "err", err)
 		return err
 	}
+	err = nil
+	if indicate {
+		err = zulipStep(job, "adding the recording indicator", b.z.AddReaction(ctx, job.MessageID, recordingEmoji))
+	}
+	// 🔴 goes before the note: removing it again on a retry is harmless, a
+	// second note is not.
+	if err == nil && unindicate {
+		err = zulipStep(job, "removing the recording indicator", b.z.RemoveReaction(ctx, job.MessageID, recordingEmoji))
+	}
+	if err == nil && note != "" {
+		err = zulipStep(job, "posting to zulip", b.reply(ctx, job, note))
+	}
+	if err != nil {
+		if serr := prev.save(b.cfg.DataDir); serr != nil {
+			slog.Error("rolling the job back failed", "job", job.ID, "err", serr)
+		}
+		return err
+	}
+	if transcribe {
+		b.handOff(job)
+	}
 	slog.Info("recorder event", "job", job.ID, "event", ev.Event, "state", job.State, "error", job.Error)
 	return nil
+}
+
+// zulipStep sorts the outcome of one Zulip call made for an event. A refusal
+// (a deleted message, a reaction already there or gone) is logged and the
+// event goes on: repeating the call cannot help. Anything else is transient and
+// comes back wrapped in errZulip.
+func zulipStep(job Job, what string, err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, errRejected):
+		slog.Warn(what+" was refused", "job", job.ID, "err", err)
+		return nil
+	default:
+		slog.Error(what+" failed", "job", job.ID, "err", err)
+		return fmt.Errorf("%w: %v", errZulip, err)
+	}
 }
 
 // failureNote is the one line a recording.failed event gets. A partial
@@ -186,23 +218,4 @@ func (b *Bot) failureNote(job Job) string {
 // holds everything §5 needs.
 func (b *Bot) handOff(job Job) {
 	slog.Info("recording ready for transcription", "job", job.ID, "duration_s", job.DurationS)
-}
-
-// notify posts content for the job and wraps a failure in errZulip.
-func (b *Bot) notify(ctx context.Context, job Job, content string) error {
-	if err := b.reply(ctx, job, content); err != nil {
-		slog.Error("posting to zulip failed", "job", job.ID, "err", err)
-		return fmt.Errorf("%w: %v", errZulip, err)
-	}
-	return nil
-}
-
-// removeIndicator drops 🔴 and wraps a failure in errZulip. A reaction that is
-// already gone counts as removed.
-func (b *Bot) removeIndicator(ctx context.Context, job Job) error {
-	if err := b.z.RemoveReaction(ctx, job.MessageID, recordingEmoji); err != nil {
-		slog.Error("removing the recording indicator failed", "job", job.ID, "err", err)
-		return fmt.Errorf("%w: %v", errZulip, err)
-	}
-	return nil
 }

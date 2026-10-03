@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -179,7 +180,7 @@ func TestDuplicateAndLateEventsHaveNoSideEffects(t *testing.T) {
 }
 
 func TestZulipFailureIs502AndTheRetryIsHandled(t *testing.T) {
-	for _, refuse := range []string{"POST /api/v1/messages", "DELETE /api/v1/messages/100/reactions"} {
+	for _, refuse := range []string{"503 POST /api/v1/messages", "503 DELETE /api/v1/messages/100/reactions"} {
 		f := newBotFixture(t)
 		f.seedJob(t, 100, recorderJitsi, false)
 		f.refuse.Store(refuse)
@@ -197,6 +198,52 @@ func TestZulipFailureIs502AndTheRetryIsHandled(t *testing.T) {
 			"NoteTaker was not admitted to the call (or nobody joined) — nothing recorded." {
 			t.Errorf("%s: calls = %q", refuse, calls)
 		}
+	}
+}
+
+// A refusal (here: the call-link message was deleted) cannot be retried away,
+// so the event is still handled.
+func TestZulipRefusalDoesNotBlockTheEvent(t *testing.T) {
+	f := newBotFixture(t)
+	f.seedJob(t, 100, recorderJitsi, false)
+	f.refuse.Store("400 DELETE /api/v1/messages/100/reactions")
+	wantStatus(t, f.post(event(evFailed, "100", `,"error":"recorder_failed"`)), http.StatusOK)
+	if j := f.job(t, "100"); j.State != jobFailed || j.LastEvent != evFailed {
+		t.Errorf("job = %+v", j)
+	}
+}
+
+// An unwritable job record fails the event before anyone is told, so the
+// recorder's retries never repeat a note.
+func TestSaveFailureNotifiesNobody(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	f := newBotFixture(t)
+	f.seedJob(t, 100, recorderJitsi, false)
+	dir := jobDir(f.dataDir, "100")
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	wantStatus(t, f.post(event(evFailed, "100", `,"error":"recorder_failed"`)), http.StatusInternalServerError)
+	wantCalls(t, f.zulipCalls())
+}
+
+// A start the bot gave up on (its POST /recordings answers were lost) comes
+// back to life when the recorder reports: 🔴 returns, the error is cleared.
+func TestProgressEventRevivesALocallyFailedStart(t *testing.T) {
+	f := newBotFixture(t)
+	f.seedJob(t, 100, recorderJitsi, false)
+	j := f.job(t, "100")
+	j.State, j.Error = jobFailed, "recorder_failed"
+	if err := j.save(f.dataDir); err != nil {
+		t.Fatal(err)
+	}
+	wantStatus(t, f.post(event(evStarted, "100", "")), http.StatusOK)
+	wantCalls(t, f.zulipCalls(), "POST /api/v1/messages/100/reactions "+recordingEmoji)
+	if j := f.job(t, "100"); j.State != jobRunning || j.Error != "" {
+		t.Errorf("job = %+v", j)
 	}
 }
 

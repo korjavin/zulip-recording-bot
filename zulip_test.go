@@ -227,20 +227,19 @@ func TestZulipReactions(t *testing.T) {
 	}
 }
 
-// Removing a reaction that is already gone succeeds, so a retried cleanup
-// converges; any other failure still surfaces.
-func TestZulipRemoveReactionAlreadyGone(t *testing.T) {
-	code := "REACTION_DOES_NOT_EXIST"
+// A 4xx is a refusal (errRejected); a 5xx is transient and is not.
+func TestZulipRejectedVersusTransient(t *testing.T) {
+	status := http.StatusBadRequest
 	z, _ := newZulipServer(t, func(w http.ResponseWriter, r *http.Request, _ url.Values) {
-		w.WriteHeader(http.StatusBadRequest)
-		io.WriteString(w, `{"result":"error","msg":"Reaction doesn't exist.","code":"`+code+`"}`)
+		w.WriteHeader(status)
+		io.WriteString(w, `{"result":"error","msg":"Reaction doesn't exist.","code":"REACTION_DOES_NOT_EXIST"}`)
 	})
-	if err := z.RemoveReaction(context.Background(), 100, micEmoji); err != nil {
-		t.Errorf("RemoveReaction() on a missing reaction = %v; want nil", err)
+	if err := z.RemoveReaction(context.Background(), 100, micEmoji); !errors.Is(err, errRejected) {
+		t.Errorf("400: err = %v; want errRejected", err)
 	}
-	code = "BAD_REQUEST"
-	if err := z.RemoveReaction(context.Background(), 100, micEmoji); err == nil {
-		t.Error("RemoveReaction() on another error = nil; want an error")
+	status = http.StatusServiceUnavailable
+	if err := z.RemoveReaction(context.Background(), 100, micEmoji); err == nil || errors.Is(err, errRejected) {
+		t.Errorf("503: err = %v; want a transient error", err)
 	}
 }
 
