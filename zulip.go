@@ -29,6 +29,10 @@ const micEmoji = "studio_microphone"
 // The event loop answers it by registering a fresh queue.
 var errBadQueue = errors.New("zulip: bad event queue id")
 
+// errNoReaction is a removal of a reaction that is not there (Zulip code
+// REACTION_DOES_NOT_EXIST).
+var errNoReaction = errors.New("zulip: reaction does not exist")
+
 func newZulip(cfg Config) *Zulip {
 	return &Zulip{
 		site:  cfg.ZulipSite,
@@ -129,8 +133,14 @@ func (z *Zulip) AddReaction(ctx context.Context, msgID int64, emojiName string) 
 	return z.do(ctx, http.MethodPost, messagePath(msgID)+"/reactions", nil, url.Values{"emoji_name": {emojiName}}, nil)
 }
 
+// RemoveReaction drops the bot's reaction. One that is already gone is not an
+// error, so a retried cleanup converges.
 func (z *Zulip) RemoveReaction(ctx context.Context, msgID int64, emojiName string) error {
-	return z.do(ctx, http.MethodDelete, messagePath(msgID)+"/reactions", nil, url.Values{"emoji_name": {emojiName}}, nil)
+	err := z.do(ctx, http.MethodDelete, messagePath(msgID)+"/reactions", nil, url.Values{"emoji_name": {emojiName}}, nil)
+	if errors.Is(err, errNoReaction) {
+		return nil
+	}
+	return err
 }
 
 // SendMessage posts into a stream topic.
@@ -198,8 +208,11 @@ func (z *Zulip) do(ctx context.Context, method, path string, query, form url.Val
 	}
 	_ = json.Unmarshal(b, &status) // a non-JSON body leaves it zero; the status check below still fires
 	if status.Result == "error" {
-		if status.Code == "BAD_EVENT_QUEUE_ID" { // only /events produces this
+		switch status.Code {
+		case "BAD_EVENT_QUEUE_ID": // only /events produces this
 			return errBadQueue
+		case "REACTION_DOES_NOT_EXIST":
+			return errNoReaction
 		}
 		return fmt.Errorf("zulip %s %s: %s", method, path, status.Msg)
 	}

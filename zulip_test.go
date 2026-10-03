@@ -227,6 +227,23 @@ func TestZulipReactions(t *testing.T) {
 	}
 }
 
+// Removing a reaction that is already gone succeeds, so a retried cleanup
+// converges; any other failure still surfaces.
+func TestZulipRemoveReactionAlreadyGone(t *testing.T) {
+	code := "REACTION_DOES_NOT_EXIST"
+	z, _ := newZulipServer(t, func(w http.ResponseWriter, r *http.Request, _ url.Values) {
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, `{"result":"error","msg":"Reaction doesn't exist.","code":"`+code+`"}`)
+	})
+	if err := z.RemoveReaction(context.Background(), 100, micEmoji); err != nil {
+		t.Errorf("RemoveReaction() on a missing reaction = %v; want nil", err)
+	}
+	code = "BAD_REQUEST"
+	if err := z.RemoveReaction(context.Background(), 100, micEmoji); err == nil {
+		t.Error("RemoveReaction() on another error = nil; want an error")
+	}
+}
+
 func TestZulipSendMessage(t *testing.T) {
 	z, s := newZulipServer(t, func(w http.ResponseWriter, r *http.Request, _ url.Values) { ok(w, "") })
 	if err := z.SendMessage(context.Background(), testStream, testTopic, "hello"); err != nil {

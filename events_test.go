@@ -122,7 +122,7 @@ func TestFinishedMinRecordingBoundary(t *testing.T) {
 		f.seedJob(t, 100, recorderJitsi, false)
 		wantStatus(t, f.post(event(evFinished, "100", `,"duration_s":`+tc.dur+`,"artifacts":`+testAudio)), http.StatusOK)
 		if tc.short {
-			wantCalls(t, f.zulipCalls(), "POST /api/v1/messages Recording too short (under 15 s) — nothing to transcribe.", unindicate)
+			wantCalls(t, f.zulipCalls(), unindicate, "POST /api/v1/messages Recording too short (under 15 s) — nothing to transcribe.")
 		} else {
 			wantCalls(t, f.zulipCalls(), unindicate)
 		}
@@ -145,8 +145,8 @@ func TestFailedNotes(t *testing.T) {
 			extra += `,"artifacts":` + tc.artifacts
 		}
 		wantStatus(t, f.post(event(evFailed, "100", extra)), http.StatusOK)
-		wantCalls(t, f.zulipCalls(), "POST /api/v1/messages "+tc.note, unindicate)
-		if form := f.zulip.requests()[0].form; form.Get("to") != `"`+testStream+`"` || form.Get("topic") != testTopic {
+		wantCalls(t, f.zulipCalls(), unindicate, "POST /api/v1/messages "+tc.note)
+		if form := f.zulip.requests()[1].form; form.Get("to") != `"`+testStream+`"` || form.Get("topic") != testTopic {
 			t.Errorf("note went to %v", form)
 		}
 		if j := f.job(t, "100"); j.State != jobFailed || j.Error != tc.err || j.LastEvent != evFailed {
@@ -159,7 +159,7 @@ func TestFailedInADMJobGoesToTheDM(t *testing.T) {
 	f := newBotFixture(t)
 	f.seedJob(t, 100, recorderJitsi, true)
 	wantStatus(t, f.post(event(evFailed, "100", `,"error":"not_admitted"`)), http.StatusOK)
-	if to := f.zulip.requests()[0].form.Get("to"); to != "[42]" {
+	if to := f.zulip.requests()[1].form.Get("to"); to != "[42]" {
 		t.Errorf("note went to %q", to)
 	}
 }
@@ -172,25 +172,45 @@ func TestDuplicateAndLateEventsHaveNoSideEffects(t *testing.T) {
 	wantStatus(t, f.post(failed), http.StatusOK)
 	// A best-effort event arriving after the end must not reopen the job.
 	wantStatus(t, f.post(event(evStarted, "100", "")), http.StatusOK)
-	wantCalls(t, f.zulipCalls(), "POST /api/v1/messages "+noteRecorderFailed, unindicate)
+	wantCalls(t, f.zulipCalls(), unindicate, "POST /api/v1/messages "+noteRecorderFailed)
 	if j := f.job(t, "100"); j.State != jobFailed || len(j.Events) != 1 {
 		t.Errorf("job = %+v", j)
 	}
 }
 
-func TestZulipRefusalIs502AndTheRetryIsHandled(t *testing.T) {
-	f := newBotFixture(t)
-	f.seedJob(t, 100, recorderJitsi, false)
-	f.refuseSend.Store(true)
-	body := event(evFailed, "100", `,"error":"not_admitted"`)
-	wantStatus(t, f.post(body), http.StatusBadGateway)
-	if j := f.job(t, "100"); j.State != jobRunning || len(j.Events) != 0 {
-		t.Errorf("after a refusal job = %+v", j)
+func TestZulipFailureIs502AndTheRetryIsHandled(t *testing.T) {
+	for _, refuse := range []string{"POST /api/v1/messages", "DELETE /api/v1/messages/100/reactions"} {
+		f := newBotFixture(t)
+		f.seedJob(t, 100, recorderJitsi, false)
+		f.refuse.Store(refuse)
+		body := event(evFailed, "100", `,"error":"not_admitted"`)
+		wantStatus(t, f.post(body), http.StatusBadGateway)
+		if j := f.job(t, "100"); j.State != jobRunning || len(j.Events) != 0 {
+			t.Errorf("%s: after a refusal job = %+v", refuse, j)
+		}
+		f.refuse.Store("")
+		wantStatus(t, f.post(body), http.StatusOK)
+		if j := f.job(t, "100"); j.State != jobFailed {
+			t.Errorf("%s: after the retry job = %+v", refuse, j)
+		}
+		if calls := f.zulipCalls(); calls[len(calls)-1] != "POST /api/v1/messages "+
+			"NoteTaker was not admitted to the call (or nobody joined) — nothing recorded." {
+			t.Errorf("%s: calls = %q", refuse, calls)
+		}
 	}
-	f.refuseSend.Store(false)
-	wantStatus(t, f.post(body), http.StatusOK)
-	if j := f.job(t, "100"); j.State != jobFailed {
-		t.Errorf("after the retry job = %+v", j)
+}
+
+// The recorder reported, so it has the job: a failed POST /recordings answer
+// must not tell the user the recording failed.
+func TestEventDuringFailedStartKeepsTheRecording(t *testing.T) {
+	f := newBotFixture(t, http.StatusUnprocessableEntity)
+	f.jitsi.onRequest = func() {
+		wantStatus(t, f.post(event(evStarted, "100", "")), http.StatusOK)
+	}
+	f.click()
+	wantCalls(t, f.zulipCalls(), "POST /api/v1/messages/100/reactions "+recordingEmoji)
+	if j := f.job(t, "100"); j.State != jobRunning || j.LastEvent != evStarted {
+		t.Errorf("job = %+v", j)
 	}
 }
 

@@ -45,9 +45,9 @@ type recorderEvent struct {
 // errUnknownJob is an event for a job the bot never created.
 var errUnknownJob = errors.New("unknown job")
 
-// errNotify is a user-facing message Zulip refused; the event stays unhandled
-// so the recorder's retry delivers it again.
-var errNotify = errors.New("notifying the user failed")
+// errZulip is a Zulip call that failed while handling an event; the event
+// stays unhandled so the recorder's retry delivers it again.
+var errZulip = errors.New("zulip call failed")
 
 // serveEvents is POST /events: a signed recorder event.
 func (b *Bot) serveEvents(w http.ResponseWriter, r *http.Request) {
@@ -70,8 +70,8 @@ func (b *Bot) serveEvents(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, errUnknownJob):
 		http.Error(w, "unknown job", http.StatusNotFound)
-	case errors.Is(err, errNotify):
-		http.Error(w, "zulip refused the message", http.StatusBadGateway)
+	case errors.Is(err, errZulip):
+		http.Error(w, "zulip call failed", http.StatusBadGateway)
 	case err != nil:
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}
@@ -122,6 +122,11 @@ func (b *Bot) applyEvent(ctx context.Context, ev recorderEvent) error {
 	case evStarted:
 		job.State = jobRunning // 🔴 is already on
 	case evFinished:
+		// 🔴 goes first: removing it again on a redelivery is a no-op, a second
+		// note is not.
+		if err := b.removeIndicator(ctx, job); err != nil {
+			return err
+		}
 		job.State, job.Error = jobFinished, ""
 		job.StartedAt, job.EndedAt, job.DurationS = ev.StartedAt, ev.EndedAt, ev.DurationS
 		job.Participants, job.Artifacts = ev.Participants, ev.Artifacts
@@ -133,14 +138,15 @@ func (b *Bot) applyEvent(ctx context.Context, ev recorderEvent) error {
 		} else {
 			b.handOff(job)
 		}
-		b.removeIndicator(ctx, job)
 	case evFailed:
+		if err := b.removeIndicator(ctx, job); err != nil {
+			return err
+		}
 		job.State, job.Error = jobFailed, ev.Error
 		job.Artifacts = ev.Artifacts
 		if err := b.notify(ctx, job, b.failureNote(job)); err != nil {
 			return err
 		}
-		b.removeIndicator(ctx, job)
 	default:
 		slog.Warn("unknown recorder event ignored", "job", job.ID, "event", ev.Event)
 		return nil
@@ -182,19 +188,21 @@ func (b *Bot) handOff(job Job) {
 	slog.Info("recording ready for transcription", "job", job.ID, "duration_s", job.DurationS)
 }
 
-// notify posts content for the job and wraps a failure in errNotify.
+// notify posts content for the job and wraps a failure in errZulip.
 func (b *Bot) notify(ctx context.Context, job Job, content string) error {
 	if err := b.reply(ctx, job, content); err != nil {
 		slog.Error("posting to zulip failed", "job", job.ID, "err", err)
-		return fmt.Errorf("%w: %v", errNotify, err)
+		return fmt.Errorf("%w: %v", errZulip, err)
 	}
 	return nil
 }
 
-// removeIndicator drops 🔴. Failure is logged only: a redelivered event would
-// fail the same way on a reaction that is already gone.
-func (b *Bot) removeIndicator(ctx context.Context, job Job) {
+// removeIndicator drops 🔴 and wraps a failure in errZulip. A reaction that is
+// already gone counts as removed.
+func (b *Bot) removeIndicator(ctx context.Context, job Job) error {
 	if err := b.z.RemoveReaction(ctx, job.MessageID, recordingEmoji); err != nil {
 		slog.Error("removing the recording indicator failed", "job", job.ID, "err", err)
+		return fmt.Errorf("%w: %v", errZulip, err)
 	}
+	return nil
 }

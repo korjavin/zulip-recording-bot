@@ -235,9 +235,20 @@ func (b *Bot) launch(ctx context.Context, job Job) {
 		return
 	}
 
-	if err != nil {
-		// Clean up while the job is still "starting": a click arriving meanwhile
-		// is a no-op, so this removal can never strip a newer attempt's 🔴.
+	// Under the lock, so neither a click nor a recorder event can interleave
+	// with the cleanup below.
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	cur, lerr := loadJob(b.cfg.DataDir, job.ID)
+	if lerr != nil || cur.State != jobStarting {
+		// A recorder event got here first: the recorder has the job, and the
+		// event owns the state and what the user is told.
+		return
+	}
+	if err == nil {
+		cur.State = jobRunning
+		slog.Info("recording accepted", "job", job.ID)
+	} else {
 		slog.Error("recording request failed", "job", job.ID, "err", err)
 		if err := b.reply(ctx, job, noteRecorderFailed); err != nil {
 			slog.Error("posting the failure note failed", "job", job.ID, "err", err)
@@ -245,19 +256,6 @@ func (b *Bot) launch(ctx context.Context, job Job) {
 		if err := b.z.RemoveReaction(ctx, job.MessageID, recordingEmoji); err != nil {
 			slog.Error("removing the recording indicator failed", "job", job.ID, "err", err)
 		}
-	}
-
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	cur, lerr := loadJob(b.cfg.DataDir, job.ID)
-	if lerr != nil || cur.State != jobStarting {
-		// A recorder event got here first; it owns the state now.
-		return
-	}
-	if err == nil {
-		cur.State = jobRunning
-		slog.Info("recording accepted", "job", job.ID)
-	} else {
 		cur.State, cur.Error = jobFailed, "recorder_failed"
 	}
 	if err := cur.save(b.cfg.DataDir); err != nil {
