@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path"
 	"regexp"
 	"strconv"
@@ -159,7 +160,14 @@ func (b *Bot) jitsiURL(content string) string {
 func (b *Bot) start(ctx context.Context, m Message, recorder, url string) {
 	id := strconv.FormatInt(m.ID, 10)
 	b.mu.Lock()
-	if old, err := loadJob(b.cfg.DataDir, id); err == nil && !(old.State == jobFailed && old.LastEvent == "") {
+	old, err := loadJob(b.cfg.DataDir, id)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+	case err != nil:
+		b.mu.Unlock()
+		slog.Error("reading the job failed", "job", id, "err", err)
+		return
+	case !(old.State == jobFailed && old.LastEvent == ""):
 		b.mu.Unlock()
 		slog.Debug("recording already requested", "job", id)
 		return
@@ -179,7 +187,7 @@ func (b *Bot) start(ctx context.Context, m Message, recorder, url string) {
 	} else {
 		job.Stream, job.Topic = string(m.DisplayRecipient), m.Subject
 	}
-	err := job.save(b.cfg.DataDir)
+	err = job.save(b.cfg.DataDir)
 	b.mu.Unlock()
 	if err != nil {
 		slog.Error("saving the job failed", "job", id, "err", err)
