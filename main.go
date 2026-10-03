@@ -26,6 +26,13 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go func() {
+		// Bad Zulip credentials stop the service instead of leaving it half-up.
+		if err := newBot(cfg, newZulip(cfg)).Run(ctx); err != nil {
+			slog.Error("zulip-recording-bot failed", "err", err)
+			os.Exit(1)
+		}
+	}()
 	if err := run(ctx, cfg, nil); err != nil {
 		slog.Error("zulip-recording-bot failed", "err", err)
 		os.Exit(1)
