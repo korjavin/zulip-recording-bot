@@ -128,10 +128,12 @@ func (b *Bot) handOffLoop(ctx context.Context) {
 	}
 }
 
-// sweepHandOffs sends every pending hand-off. A transcriber still down after
-// the retries ends the sweep and the next sweep tries again; any other failure
-// (a refusal, an unwritable job) skips to the next job. Either way the job
-// stays pending.
+// sweepHandOffs sends every pending hand-off. A failed one stays pending for the
+// next sweep and the sweep goes on, so one bad job never holds up the others.
+//
+// ponytail: with the transcriber down, every pending job runs its full retry
+// table in turn (~8 min each); skip retries after the first outage in a sweep
+// if a backlog ever makes that slow.
 func (b *Bot) sweepHandOffs(ctx context.Context) {
 	entries, err := os.ReadDir(filepath.Join(b.cfg.DataDir, "jobs"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -146,9 +148,6 @@ func (b *Bot) sweepHandOffs(ctx context.Context) {
 		err = b.handOff(ctx, job)
 		if err != nil && ctx.Err() == nil {
 			slog.Error("transcriber hand-off failed, retrying in the next sweep", "job", job.ID, "err", err)
-		}
-		if errors.Is(err, errTranscriberDown) {
-			return
 		}
 	}
 }
@@ -194,7 +193,7 @@ var errTranscriberDown = errors.New("transcriber unavailable")
 func postHandOff(ctx context.Context, target, secret string, body []byte) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return errors.New("WEBHOOK_URL is not a valid URL") // the parse error would quote it
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-jitsi-capture-event", evFinished)

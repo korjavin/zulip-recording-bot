@@ -224,8 +224,8 @@ func TestNotifyZulipRefusalIs502(t *testing.T) {
 	}
 }
 
-// A job the transcriber refuses is not retried at once and does not hold up
-// the jobs after it.
+// A job the transcriber refuses (4xx, or a 5xx after its retries) is not
+// retried at once and does not hold up the jobs after it.
 func TestRefusedHandOffDoesNotStarveOthers(t *testing.T) {
 	f := newBotFixture(t)
 	tr := newFakeTranscriber(t, f, http.StatusBadRequest, http.StatusOK)
@@ -246,6 +246,10 @@ func TestHandOffErrorHidesTheWebhookURL(t *testing.T) {
 	srv.Close() // nothing listens there now
 	err := postHandOff(context.Background(), srv.URL+"/hook?token=s3cret", "k", []byte("{}"))
 	if !errors.Is(err, errTranscriberDown) || strings.Contains(err.Error(), "s3cret") {
+		t.Errorf("err = %v", err)
+	}
+	err = postHandOff(context.Background(), "http://transcriber.example.com/hook%zz?token=s3cret", "k", []byte("{}"))
+	if err == nil || strings.Contains(err.Error(), "s3cret") {
 		t.Errorf("err = %v", err)
 	}
 }
