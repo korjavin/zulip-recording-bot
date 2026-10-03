@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -127,9 +128,10 @@ func (b *Bot) handOffLoop(ctx context.Context) {
 	}
 }
 
-// sweepHandOffs sends every pending hand-off. A refused one is skipped; any
-// other failure after the retries ends the sweep — the transcriber is down, and
-// the next sweep tries again. Either way the job stays pending.
+// sweepHandOffs sends every pending hand-off. A transcriber still down after
+// the retries ends the sweep and the next sweep tries again; any other failure
+// (a refusal, an unwritable job) skips to the next job. Either way the job
+// stays pending.
 func (b *Bot) sweepHandOffs(ctx context.Context) {
 	entries, err := os.ReadDir(filepath.Join(b.cfg.DataDir, "jobs"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -145,7 +147,7 @@ func (b *Bot) sweepHandOffs(ctx context.Context) {
 		if err != nil && ctx.Err() == nil {
 			slog.Error("transcriber hand-off failed, retrying in the next sweep", "job", job.ID, "err", err)
 		}
-		if err != nil && !errors.Is(err, errHandOffRefused) {
+		if errors.Is(err, errTranscriberDown) {
 			return
 		}
 	}
@@ -164,7 +166,7 @@ func (b *Bot) handOff(ctx context.Context, job Job) error {
 		if err == nil {
 			break
 		}
-		if errors.Is(err, errHandOffRefused) || attempt == len(handOffRetryDelays) || ctx.Err() != nil {
+		if !errors.Is(err, errTranscriberDown) || attempt == len(handOffRetryDelays) || ctx.Err() != nil {
 			return err
 		}
 		slog.Warn("transcriber hand-off failed, retrying", "job", job.ID, "attempt", attempt+1, "err", err)
@@ -184,13 +186,13 @@ func (b *Bot) handOff(ctx context.Context, job Job) error {
 	return nil
 }
 
-// errHandOffRefused is a 4xx: the transcriber rejects this job, so retrying it
-// at once cannot help.
-var errHandOffRefused = errors.New("transcriber refused the hand-off")
+// errTranscriberDown is a network error or a 5xx: worth retrying. A 4xx is a
+// refusal of this job and is not retried at once.
+var errTranscriberDown = errors.New("transcriber unavailable")
 
 // postHandOff is one attempt; anything but 2xx is an error.
-func postHandOff(ctx context.Context, url, secret string, body []byte) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+func postHandOff(ctx context.Context, target, secret string, body []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -198,16 +200,20 @@ func postHandOff(ctx context.Context, url, secret string, body []byte) error {
 	req.Header.Set("x-jitsi-capture-event", evFinished)
 	req.Header.Set("x-jitsi-capture-signature", sign(body, secret))
 	resp, err := transcriberHTTP.Do(req)
+	var uerr *url.Error
+	if errors.As(err, &uerr) {
+		err = uerr.Err // the url.Error text carries WEBHOOK_URL, which may hold a credential
+	}
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: WEBHOOK_URL: %v", errTranscriberDown, err)
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-		return fmt.Errorf("%w: http %d", errHandOffRefused, resp.StatusCode)
+	if resp.StatusCode >= 500 {
+		return fmt.Errorf("%w: http %d", errTranscriberDown, resp.StatusCode)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("transcriber: http %d", resp.StatusCode)
+		return fmt.Errorf("transcriber refused the hand-off: http %d", resp.StatusCode)
 	}
 	return nil
 }

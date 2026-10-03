@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -237,5 +238,14 @@ func TestRefusedHandOffDoesNotStarveOthers(t *testing.T) {
 	f.bot.sweepHandOffs(context.Background())
 	if tr.count() != 2 || f.job(t, "100").Webhook != handOffPending || f.job(t, "200").Webhook != handOffSent {
 		t.Errorf("attempts = %d; jobs %q %q", tr.count(), f.job(t, "100").Webhook, f.job(t, "200").Webhook)
+	}
+}
+
+func TestHandOffErrorHidesTheWebhookURL(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	srv.Close() // nothing listens there now
+	err := postHandOff(context.Background(), srv.URL+"/hook?token=s3cret", "k", []byte("{}"))
+	if !errors.Is(err, errTranscriberDown) || strings.Contains(err.Error(), "s3cret") {
+		t.Errorf("err = %v", err)
 	}
 }
