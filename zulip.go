@@ -29,6 +29,10 @@ const micEmoji = "studio_microphone"
 // The event loop answers it by registering a fresh queue.
 var errBadQueue = errors.New("zulip: bad event queue id")
 
+// errRejected wraps a 4xx answer: Zulip understood the request and refused it
+// (a deleted message, a reaction already gone), so repeating it cannot help.
+var errRejected = errors.New("zulip rejected the request")
+
 func newZulip(cfg Config) *Zulip {
 	return &Zulip{
 		site:  cfg.ZulipSite,
@@ -197,14 +201,18 @@ func (z *Zulip) do(ctx context.Context, method, path string, query, form url.Val
 		Code   string `json:"code"`
 	}
 	_ = json.Unmarshal(b, &status) // a non-JSON body leaves it zero; the status check below still fires
-	if status.Result == "error" {
+	if status.Result == "error" || resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if status.Code == "BAD_EVENT_QUEUE_ID" { // only /events produces this
 			return errBadQueue
 		}
-		return fmt.Errorf("zulip %s %s: %s", method, path, status.Msg)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("zulip %s %s: http %d", method, path, resp.StatusCode)
+		err := fmt.Errorf("zulip %s %s: http %d", method, path, resp.StatusCode)
+		if status.Msg != "" {
+			err = fmt.Errorf("zulip %s %s: %s", method, path, status.Msg)
+		}
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			err = fmt.Errorf("%w: %w", errRejected, err)
+		}
+		return err
 	}
 	if out == nil {
 		return nil

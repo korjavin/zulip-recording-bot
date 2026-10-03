@@ -29,6 +29,7 @@ type Config struct {
 	MeetJoinTimeoutS int // Meet: a guest waits in the lobby until admitted
 	MaxDurationS     int
 	EmptyGraceS      int
+	MinRecordingS    int // a shorter recording is not transcribed
 }
 
 // loadConfig reads the environment. It always returns a Config with defaults
@@ -83,6 +84,7 @@ func loadConfig() (Config, error) {
 		MeetJoinTimeoutS: num("MEET_JOIN_TIMEOUT_S", 1200),
 		MaxDurationS:     num("MAX_DURATION_S", 14400),
 		EmptyGraceS:      num("EMPTY_GRACE_S", 60),
+		MinRecordingS:    num("MIN_RECORDING_S", 15),
 	}
 	var errs []error
 	if len(missing) > 0 {

@@ -14,7 +14,8 @@ func TestRunServesHealthAndShutsDown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	addrc := make(chan net.Addr, 1)
 	done := make(chan error, 1)
-	go func() { done <- run(ctx, Config{ListenAddr: "127.0.0.1:0"}, func(a net.Addr) { addrc <- a }) }()
+	cfg := Config{ListenAddr: "127.0.0.1:0"}
+	go func() { done <- run(ctx, cfg, newBot(cfg, nil), func(a net.Addr) { addrc <- a }) }()
 
 	resp, err := http.Get("http://" + (<-addrc).String() + "/health")
 	if err != nil {

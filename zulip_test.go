@@ -227,6 +227,22 @@ func TestZulipReactions(t *testing.T) {
 	}
 }
 
+// A 4xx is a refusal (errRejected); a 5xx is transient and is not.
+func TestZulipRejectedVersusTransient(t *testing.T) {
+	status := http.StatusBadRequest
+	z, _ := newZulipServer(t, func(w http.ResponseWriter, r *http.Request, _ url.Values) {
+		w.WriteHeader(status)
+		io.WriteString(w, `{"result":"error","msg":"Reaction doesn't exist.","code":"REACTION_DOES_NOT_EXIST"}`)
+	})
+	if err := z.RemoveReaction(context.Background(), 100, micEmoji); !errors.Is(err, errRejected) {
+		t.Errorf("400: err = %v; want errRejected", err)
+	}
+	status = http.StatusServiceUnavailable
+	if err := z.RemoveReaction(context.Background(), 100, micEmoji); err == nil || errors.Is(err, errRejected) {
+		t.Errorf("503: err = %v; want a transient error", err)
+	}
+}
+
 func TestZulipSendMessage(t *testing.T) {
 	z, s := newZulipServer(t, func(w http.ResponseWriter, r *http.Request, _ url.Values) { ok(w, "") })
 	if err := z.SendMessage(context.Background(), testStream, testTopic, "hello"); err != nil {
