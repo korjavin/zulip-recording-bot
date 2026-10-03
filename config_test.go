@@ -9,12 +9,37 @@ import (
 // each test starts from a known environment.
 func setRequired(t *testing.T) {
 	t.Helper()
-	for _, n := range []string{"LISTEN_ADDR", "PUBLIC_URL", "DATA_DIR", "LOG_LEVEL"} {
+	for _, n := range []string{"LISTEN_ADDR", "PUBLIC_URL", "DATA_DIR", "LOG_LEVEL",
+		"JITSI_BASE_URL", "JITSI_RECORDER_URL", "MEET_RECORDER_URL", "BOT_DISPLAY_NAME",
+		"JOIN_TIMEOUT_S", "MEET_JOIN_TIMEOUT_S", "MAX_DURATION_S", "EMPTY_GRACE_S"} {
 		t.Setenv(n, "")
 	}
 	t.Setenv("ZULIP_SITE", "https://zulip.example.com/")
 	t.Setenv("ZULIP_BOT_EMAIL", "bot@example.com")
 	t.Setenv("ZULIP_BOT_API_KEY", "test-key")
+	t.Setenv("RECORDER_SECRET", "test-secret")
+}
+
+func TestLoadConfigRecorderDefaults(t *testing.T) {
+	setRequired(t)
+	c, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if c.JitsiBaseURL != "https://meet.jit.si" || c.BotDisplayName != "NoteTaker" || c.RecorderSecret != "test-secret" ||
+		c.JoinTimeoutS != 600 || c.MeetJoinTimeoutS != 1200 || c.MaxDurationS != 14400 || c.EmptyGraceS != 60 {
+		t.Errorf("got %+v", c)
+	}
+}
+
+func TestLoadConfigBadNumber(t *testing.T) {
+	setRequired(t)
+	t.Setenv("MAX_DURATION_S", "4h")
+	t.Setenv("EMPTY_GRACE_S", "0")
+	_, err := loadConfig()
+	if err == nil || err.Error() != "not a positive integer: MAX_DURATION_S, EMPTY_GRACE_S" {
+		t.Fatalf("error = %v", err)
+	}
 }
 
 func TestLoadConfigDefaults(t *testing.T) {

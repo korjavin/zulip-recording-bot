@@ -21,6 +21,22 @@ Environment only:
 | `PUBLIC_URL` | `http://localhost:8080` | base of the callback URLs given to other services |
 | `DATA_DIR` | `/data` | the bot's own job state |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARN`, `ERROR` |
+| `RECORDER_SECRET` | — | required; HMAC key for `x-recorder-signature` |
+| `JITSI_BASE_URL` | `https://meet.jit.si` | links under it are Jitsi calls |
+| `JITSI_RECORDER_URL` | `http://jitsi-recorder:8080` | |
+| `MEET_RECORDER_URL` | `http://meet-recorder:8080` | |
+| `BOT_DISPLAY_NAME` | `NoteTaker` | the name the recorder joins with |
+| `JOIN_TIMEOUT_S` | `600` | Jitsi: give up if not admitted by then |
+| `MEET_JOIN_TIMEOUT_S` | `1200` | Meet: same, for the lobby |
+| `MAX_DURATION_S` | `14400` | longest recording |
+| `EMPTY_GRACE_S` | `60` | stop after the room has been empty this long |
+
+## Usage
+
+* A stream message with a Jitsi link gets a 🎙️ reaction. Click it to record;
+  🔴 shows while the recording runs.
+* Send the bot a Jitsi or Google Meet link by DM to record right away. Meet
+  links are honoured in DMs only.
 
 ## Build and test
 
