@@ -125,3 +125,47 @@ bd prime                # Refresh Beads context
 
 **Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/core-concepts/sync-concepts.md for details and anti-patterns.
 <!-- END BEADS CODEX SETUP -->
+
+
+## Build & Test
+
+```bash
+gofmt -l . && go vet ./... && go test -race ./...
+docker build -t zulip-recording-bot .
+```
+
+Unit tests must pass offline: no network, no Zulip, no recorder, no
+transcriber. Use `net/http/httptest` for every HTTP boundary (Zulip API, fake
+recorders, fake transcriber).
+
+## Architecture Overview
+
+A Zulip bot that records calls on request. It notices call links in Zulip
+(🎙️ reaction offer in streams, direct requests by DM), asks the matching
+recorder service (`jitsi-recorder`, `meet-recorder`) to record over HTTP,
+receives their signed events, keeps the user informed, hands finished
+recordings to the transcriber and posts "transcript ready" when tr2outline
+calls `POST /notify`.
+
+**`docs/architecture.md` is the spec and the canonical copy** of the recorder
+contract shared with `korjavin/jitsi-recorder` and `korjavin/meet-recorder`.
+A contract change lands here first and is then copied to both recorders.
+
+The bot never touches audio: it does not mount the recordings volume and has
+no browser, Node or PulseAudio in its image.
+
+- Go `package main` at the repo root, flat files, **stdlib only** — no
+  dependencies (no go.sum).
+- Configuration is env-only; `config.go` is the single reader of `os.Getenv`.
+
+## Conventions & Patterns
+
+- **English only** in every public artifact: README, docs, code comments,
+  commit messages, PR bodies, `.env.example`.
+- **Public repo:** never commit real domains, emails, keys, stream/topic names
+  or user data. Use placeholders (`example.com`, `SomeRoom`).
+- Never log secrets — log the variable NAME. Never log a full meeting URL (it
+  may carry a token); log the room name / meeting code.
+- Docs describe this service as designed from scratch: never reference the
+  repositories or code it was derived from. Bead descriptions may name a source
+  to copy from; the README and docs must not.

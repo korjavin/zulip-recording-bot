@@ -60,18 +60,43 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 
 ## Build & Test
 
-_Add your build and test commands here_
-
 ```bash
-# Example:
-# npm install
-# npm test
+gofmt -l . && go vet ./... && go test -race ./...
+docker build -t zulip-recording-bot .
 ```
+
+Unit tests must pass offline: no network, no Zulip, no recorder, no
+transcriber. Use `net/http/httptest` for every HTTP boundary (Zulip API, fake
+recorders, fake transcriber).
 
 ## Architecture Overview
 
-_Add a brief overview of your project architecture_
+A Zulip bot that records calls on request. It notices call links in Zulip
+(🎙️ reaction offer in streams, direct requests by DM), asks the matching
+recorder service (`jitsi-recorder`, `meet-recorder`) to record over HTTP,
+receives their signed events, keeps the user informed, hands finished
+recordings to the transcriber and posts "transcript ready" when tr2outline
+calls `POST /notify`.
+
+**`docs/architecture.md` is the spec and the canonical copy** of the recorder
+contract shared with `korjavin/jitsi-recorder` and `korjavin/meet-recorder`.
+A contract change lands here first and is then copied to both recorders.
+
+The bot never touches audio: it does not mount the recordings volume and has
+no browser, Node or PulseAudio in its image.
+
+- Go `package main` at the repo root, flat files, **stdlib only** — no
+  dependencies (no go.sum).
+- Configuration is env-only; `config.go` is the single reader of `os.Getenv`.
 
 ## Conventions & Patterns
 
-_Add your project-specific conventions here_
+- **English only** in every public artifact: README, docs, code comments,
+  commit messages, PR bodies, `.env.example`.
+- **Public repo:** never commit real domains, emails, keys, stream/topic names
+  or user data. Use placeholders (`example.com`, `SomeRoom`).
+- Never log secrets — log the variable NAME. Never log a full meeting URL (it
+  may carry a token); log the room name / meeting code.
+- Docs describe this service as designed from scratch: never reference the
+  repositories or code it was derived from. Bead descriptions may name a source
+  to copy from; the README and docs must not.
