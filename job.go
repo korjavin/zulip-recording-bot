@@ -26,6 +26,8 @@ type Job struct {
 	LastEvent   string    `json:"last_event,omitempty"`
 	Events      []string  `json:"events,omitempty"` // every recorder event handled, for idempotence
 
+	WatchdogMisses int `json:"watchdog_misses,omitempty"` // overdue checks in a row that found no recording
+
 	// From recording.finished / recording.failed (§3.5).
 	StartedAt    string     `json:"started_at,omitempty"`
 	EndedAt      string     `json:"ended_at,omitempty"`

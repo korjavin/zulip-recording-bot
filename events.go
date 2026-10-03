@@ -21,6 +21,11 @@ const (
 	evStarted          = "recording.started"
 	evFinished         = "recording.finished"
 	evFailed           = "recording.failed"
+
+	// evLost is the watchdog's verdict, never a recorder's: it ends the job like
+	// recording.failed but stays out of Job.Events, so the recorder's own
+	// terminal event, should it arrive after all, is still handled.
+	evLost = "watchdog.lost"
 )
 
 // jobIDRe is the contract's id format; anything else cannot be one of our jobs
@@ -88,8 +93,17 @@ func (b *Bot) applyEvent(ctx context.Context, ev recorderEvent) error {
 	if !jobIDRe.MatchString(ev.ID) {
 		return errUnknownJob
 	}
+	if ev.Event == evLost {
+		return nil // a recorder cannot claim the watchdog's verdict
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	return b.applyEventLocked(ctx, ev)
+}
+
+// applyEventLocked is applyEvent for a caller already holding Bot.mu and a
+// valid ev.ID.
+func (b *Bot) applyEventLocked(ctx context.Context, ev recorderEvent) error {
 	job, err := loadJob(b.cfg.DataDir, ev.ID)
 	if errors.Is(err, os.ErrNotExist) {
 		slog.Warn("recorder event for an unknown job", "job", ev.ID, "event", ev.Event)
@@ -133,7 +147,7 @@ func (b *Bot) applyEvent(ctx context.Context, ev recorderEvent) error {
 		} else {
 			transcribe = true
 		}
-	case evFailed:
+	case evFailed, evLost:
 		job.State, job.Error = jobFailed, ev.Error
 		job.Artifacts = ev.Artifacts
 		unindicate = true
@@ -147,7 +161,9 @@ func (b *Bot) applyEvent(ctx context.Context, ev recorderEvent) error {
 	// turn every redelivery into another note. A transient Zulip failure rolls
 	// the record back and the recorder's retry tries again.
 	job.LastEvent = ev.Event
-	job.Events = append(job.Events, ev.Event)
+	if ev.Event != evLost {
+		job.Events = append(job.Events, ev.Event)
+	}
 	if err := job.save(b.cfg.DataDir); err != nil {
 		slog.Error("saving the job failed", "job", job.ID, "err", err)
 		return err
@@ -203,6 +219,8 @@ func (b *Bot) failureNote(job Job) string {
 		what, outcome = b.cfg.BotDisplayName+" was not admitted to the call (or nobody joined)", "nothing recorded."
 	case "interrupted":
 		what, outcome = "Recording was interrupted by a service restart", "no transcript."
+	case "lost": // set by the watchdog, not a recorder
+		what, outcome = "Recording was lost (recorder unavailable)", "no transcript."
 	default: // recorder_failed, or an error this bot does not know yet
 		what, outcome = "Recording failed (recorder error)", "nothing recorded."
 	}
