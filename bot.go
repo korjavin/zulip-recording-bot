@@ -41,13 +41,16 @@ type Bot struct {
 	jitsiRe *regexp.Regexp
 
 	mu sync.Mutex     // serialises the check-and-claim of a job id
-	wg sync.WaitGroup // in-flight recorder requests; tests wait on it
+	wg sync.WaitGroup // in-flight recorder requests and the hand-off loop
+
+	kick chan struct{} // wakes the hand-off loop when a recording is ready
 }
 
 func newBot(cfg Config, z *Zulip) *Bot {
 	return &Bot{
-		cfg: cfg,
-		z:   z,
+		cfg:  cfg,
+		z:    z,
+		kick: make(chan struct{}, 1),
 		// Zulip's call button posts "[Join video call.](<base>/<room>)", so the raw
 		// content is enough. The room runs to the first character markdown or prose
 		// can put after it; "?" and "#" end it too, so a JWT or room password never
@@ -60,6 +63,11 @@ func newBot(cfg Config, z *Zulip) *Bot {
 // is fatal — bad credentials should stop the service at startup rather than
 // spin; everything after that is logged and retried.
 func (b *Bot) Run(ctx context.Context) error {
+	b.wg.Add(1)
+	go func() {
+		defer b.wg.Done()
+		b.handOffLoop(ctx)
+	}()
 	id, err := b.z.Me(ctx)
 	if err != nil {
 		if ctx.Err() != nil {

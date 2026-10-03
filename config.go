@@ -30,6 +30,9 @@ type Config struct {
 	MaxDurationS     int
 	EmptyGraceS      int
 	MinRecordingS    int // a shorter recording is not transcribed
+
+	WebhookURL    string // the transcriber's inbound URL; empty disables the hand-off
+	WebhookSecret string // signs the hand-off and verifies POST /notify
 }
 
 // loadConfig reads the environment. It always returns a Config with defaults
@@ -85,6 +88,12 @@ func loadConfig() (Config, error) {
 		MaxDurationS:     num("MAX_DURATION_S", 14400),
 		EmptyGraceS:      num("EMPTY_GRACE_S", 60),
 		MinRecordingS:    num("MIN_RECORDING_S", 15),
+
+		WebhookURL:    str("WEBHOOK_URL", ""),
+		WebhookSecret: str("WEBHOOK_SECRET", ""),
+	}
+	if c.WebhookURL != "" && c.WebhookSecret == "" {
+		missing = append(missing, "WEBHOOK_SECRET")
 	}
 	var errs []error
 	if len(missing) > 0 {

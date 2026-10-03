@@ -11,7 +11,8 @@ func setRequired(t *testing.T) {
 	t.Helper()
 	for _, n := range []string{"LISTEN_ADDR", "PUBLIC_URL", "DATA_DIR", "LOG_LEVEL",
 		"JITSI_BASE_URL", "JITSI_RECORDER_URL", "MEET_RECORDER_URL", "BOT_DISPLAY_NAME",
-		"JOIN_TIMEOUT_S", "MEET_JOIN_TIMEOUT_S", "MAX_DURATION_S", "EMPTY_GRACE_S", "MIN_RECORDING_S"} {
+		"JOIN_TIMEOUT_S", "MEET_JOIN_TIMEOUT_S", "MAX_DURATION_S", "EMPTY_GRACE_S", "MIN_RECORDING_S",
+		"WEBHOOK_URL", "WEBHOOK_SECRET"} {
 		t.Setenv(n, "")
 	}
 	t.Setenv("ZULIP_SITE", "https://zulip.example.com/")
@@ -91,5 +92,18 @@ func TestLoadConfigMissingRequired(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "test-key") {
 		t.Errorf("error leaks a value: %q", err)
+	}
+}
+
+func TestLoadConfigWebhookNeedsASecret(t *testing.T) {
+	setRequired(t)
+	t.Setenv("WEBHOOK_URL", "http://transcriber.example.com/webhook")
+	_, err := loadConfig()
+	if err == nil || err.Error() != "missing required environment variables: WEBHOOK_SECRET" {
+		t.Fatalf("error = %v", err)
+	}
+	t.Setenv("WEBHOOK_SECRET", "s")
+	if c, err := loadConfig(); err != nil || c.WebhookURL == "" || c.WebhookSecret != "s" {
+		t.Fatalf("got %+v, %v", c, err)
 	}
 }
