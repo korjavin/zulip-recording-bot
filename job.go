@@ -17,14 +17,21 @@ type Job struct {
 	Topic     string `json:"topic,omitempty"`
 	DMUserID  int64  `json:"dm_user_id,omitempty"` // a DM-started job; replies go back to this user
 
-	Recorder    string     `json:"recorder"` // recorderJitsi | recorderMeet
-	URL         string     `json:"url"`      // room URL only — never a token or password
-	RequestedAt time.Time  `json:"requested_at"`
-	Deadline    time.Time  `json:"deadline"` // when the watchdog stops waiting for a terminal event
-	State       string     `json:"state"`
-	Error       string     `json:"error,omitempty"`
-	LastEvent   string     `json:"last_event,omitempty"`
-	Artifacts   []Artifact `json:"artifacts,omitempty"`
+	Recorder    string    `json:"recorder"` // recorderJitsi | recorderMeet
+	URL         string    `json:"url"`      // room URL only — never a token or password
+	RequestedAt time.Time `json:"requested_at"`
+	Deadline    time.Time `json:"deadline"` // when the watchdog stops waiting for a terminal event
+	State       string    `json:"state"`
+	Error       string    `json:"error,omitempty"`
+	LastEvent   string    `json:"last_event,omitempty"`
+	Events      []string  `json:"events,omitempty"` // every recorder event handled, for idempotence
+
+	// From recording.finished / recording.failed (§3.5).
+	StartedAt    string     `json:"started_at,omitempty"`
+	EndedAt      string     `json:"ended_at,omitempty"`
+	DurationS    float64    `json:"duration_s,omitempty"`
+	Participants []string   `json:"participants,omitempty"`
+	Artifacts    []Artifact `json:"artifacts,omitempty"`
 }
 
 // Artifact is one file a recorder reported (docs/architecture.md §3.5).
@@ -44,10 +51,12 @@ const (
 )
 
 // Job.State values. A job is "starting" while the bot is still asking the
-// recorder, "running" once the recorder accepted it.
+// recorder, "running" once the recorder accepted it or reported progress, and
+// "finished" / "failed" once it ended.
 const (
 	jobStarting = "starting"
 	jobRunning  = "running"
+	jobFinished = "finished"
 	jobFailed   = "failed"
 )
 

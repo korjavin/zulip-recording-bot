@@ -17,7 +17,7 @@ Environment only:
 | `ZULIP_SITE` | — | required, e.g. `https://zulip.example.com` |
 | `ZULIP_BOT_EMAIL` | — | required |
 | `ZULIP_BOT_API_KEY` | — | required |
-| `LISTEN_ADDR` | `:8080` | HTTP listener (`GET /health`) |
+| `LISTEN_ADDR` | `:8080` | HTTP listener (`GET /health`, `POST /events`) |
 | `PUBLIC_URL` | `http://localhost:8080` | base of the callback URLs given to other services |
 | `DATA_DIR` | `/data` | the bot's own job state |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARN`, `ERROR` |
@@ -30,6 +30,7 @@ Environment only:
 | `MEET_JOIN_TIMEOUT_S` | `1200` | Meet: same, for the lobby |
 | `MAX_DURATION_S` | `14400` | longest recording |
 | `EMPTY_GRACE_S` | `60` | stop after the room has been empty this long |
+| `MIN_RECORDING_S` | `15` | a shorter recording is not transcribed |
 
 ## Usage
 

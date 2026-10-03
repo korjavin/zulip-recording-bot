@@ -26,14 +26,15 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	bot := newBot(cfg, newZulip(cfg))
 	go func() {
 		// Bad Zulip credentials stop the service instead of leaving it half-up.
-		if err := newBot(cfg, newZulip(cfg)).Run(ctx); err != nil {
+		if err := bot.Run(ctx); err != nil {
 			slog.Error("zulip-recording-bot failed", "err", err)
 			os.Exit(1)
 		}
 	}()
-	if err := run(ctx, cfg, nil); err != nil {
+	if err := run(ctx, cfg, bot, nil); err != nil {
 		slog.Error("zulip-recording-bot failed", "err", err)
 		os.Exit(1)
 	}
@@ -43,8 +44,8 @@ func main() {
 // run serves HTTP until ctx ends. ready, when set, receives the listener's
 // address once it is up — the seam a test needs to address a :0 port; main
 // passes nil.
-func run(ctx context.Context, cfg Config, ready func(net.Addr)) error {
-	srv := newHTTPServer(cfg.ListenAddr, handler())
+func run(ctx context.Context, cfg Config, bot *Bot, ready func(net.Addr)) error {
+	srv := newHTTPServer(cfg.ListenAddr, handler(bot))
 	// Listen before serving so a busy port is a startup failure, not a log line.
 	ln, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {

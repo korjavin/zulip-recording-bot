@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -24,8 +25,9 @@ const (
 // last one repeats) and keeps every body whose signature verified.
 type fakeRecorder struct {
 	*httptest.Server
-	t        *testing.T
-	statuses []int
+	t         *testing.T
+	statuses  []int
+	onRequest func() // runs before the answer, e.g. to deliver an event early
 
 	mu   sync.Mutex
 	reqs []recordingRequest
@@ -56,6 +58,9 @@ func (f *fakeRecorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.reqs = append(f.reqs, rr)
 	st := f.statuses[min(len(f.reqs), len(f.statuses))-1]
 	f.mu.Unlock()
+	if f.onRequest != nil {
+		f.onRequest()
+	}
 	w.WriteHeader(st)
 	io.WriteString(w, `{"id":"`+rr.ID+`","state":"joining"}`)
 }
@@ -71,7 +76,8 @@ type botFixture struct {
 	zulip         *zulipServer
 	jitsi, meet   *fakeRecorder
 	dataDir       string
-	reactedStream Message // what GET /messages/{id} returns
+	reactedStream Message     // what GET /messages/{id} returns
+	refuseSend    atomic.Bool // POST /messages answers an error
 }
 
 func newBotFixture(t *testing.T, statuses ...int) *botFixture {
@@ -95,6 +101,11 @@ func newBotFixture(t *testing.T, statuses ...int) *botFixture {
 			ok(w, string(b))
 			return
 		}
+		if r.URL.Path == "/api/v1/messages" && f.refuseSend.Load() {
+			w.WriteHeader(http.StatusBadRequest)
+			io.WriteString(w, `{"result":"error","msg":"refused"}`)
+			return
+		}
 		ok(w, "")
 	})
 	f.zulip = s
@@ -110,6 +121,7 @@ func newBotFixture(t *testing.T, statuses ...int) *botFixture {
 		MeetJoinTimeoutS: 1200,
 		MaxDurationS:     14400,
 		EmptyGraceS:      60,
+		MinRecordingS:    15,
 	}, z)
 	f.bot.botID = testBotID
 	return f
