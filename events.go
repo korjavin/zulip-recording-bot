@@ -90,6 +90,12 @@ func (b *Bot) applyEvent(ctx context.Context, ev recorderEvent) error {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	return b.applyEventLocked(ctx, ev)
+}
+
+// applyEventLocked is applyEvent for a caller already holding Bot.mu and a
+// valid ev.ID.
+func (b *Bot) applyEventLocked(ctx context.Context, ev recorderEvent) error {
 	job, err := loadJob(b.cfg.DataDir, ev.ID)
 	if errors.Is(err, os.ErrNotExist) {
 		slog.Warn("recorder event for an unknown job", "job", ev.ID, "event", ev.Event)
@@ -203,6 +209,8 @@ func (b *Bot) failureNote(job Job) string {
 		what, outcome = b.cfg.BotDisplayName+" was not admitted to the call (or nobody joined)", "nothing recorded."
 	case "interrupted":
 		what, outcome = "Recording was interrupted by a service restart", "no transcript."
+	case "lost": // set by the watchdog, not a recorder
+		what, outcome = "Recording was lost (recorder unavailable)", "no transcript."
 	default: // recorder_failed, or an error this bot does not know yet
 		what, outcome = "Recording failed (recorder error)", "nothing recorded."
 	}

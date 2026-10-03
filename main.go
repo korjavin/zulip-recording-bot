@@ -27,6 +27,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	bot := newBot(cfg, newZulip(cfg))
+	go bot.watchdog(ctx)
 	go func() {
 		// Bad Zulip credentials stop the service instead of leaving it half-up.
 		if err := bot.Run(ctx); err != nil {
