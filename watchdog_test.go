@@ -193,6 +193,29 @@ func TestWatchdogAfterRestartKeepsJobs(t *testing.T) {
 	wantCalls(t, f.zulipCalls())
 }
 
+// The recorder's own terminal event still counts after the watchdog gave up:
+// its error and partial recording replace the "lost" verdict.
+func TestRealFailureAfterLostIsHandled(t *testing.T) {
+	f := newBotFixture(t)
+	r := newStatusRecorder(t, http.StatusNotFound, "")
+	now := f.overdue(t, r.URL)
+	for range watchdogMaxMisses {
+		f.bot.checkJobs(context.Background(), now)
+	}
+	// A late progress event does not reopen it.
+	wantStatus(t, f.post(event(evStarted, "100", "")), http.StatusOK)
+	if j := f.job(t, "100"); j.State != jobFailed || j.LastEvent != evLost || len(j.Events) != 0 {
+		t.Fatalf("job = %+v", j)
+	}
+	wantStatus(t, f.post(event(evFailed, "100", `,"error":"interrupted","artifacts":`+testAudio)), http.StatusOK)
+	if j := f.job(t, "100"); j.Error != "interrupted" || len(j.Artifacts) != 1 {
+		t.Errorf("job = %+v", j)
+	}
+	if calls := f.zulipCalls(); len(calls) != 4 || calls[1] != noteLost {
+		t.Errorf("calls = %q", calls)
+	}
+}
+
 // A Zulip outage while settling leaves the job watched; the next pass retries.
 func TestWatchdogRetriesAfterAZulipFailure(t *testing.T) {
 	f := newBotFixture(t)

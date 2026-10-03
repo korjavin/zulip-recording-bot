@@ -21,6 +21,11 @@ const (
 	evStarted          = "recording.started"
 	evFinished         = "recording.finished"
 	evFailed           = "recording.failed"
+
+	// evLost is the watchdog's verdict, never a recorder's: it ends the job like
+	// recording.failed but stays out of Job.Events, so the recorder's own
+	// terminal event, should it arrive after all, is still handled.
+	evLost = "watchdog.lost"
 )
 
 // jobIDRe is the contract's id format; anything else cannot be one of our jobs
@@ -88,6 +93,9 @@ func (b *Bot) applyEvent(ctx context.Context, ev recorderEvent) error {
 	if !jobIDRe.MatchString(ev.ID) {
 		return errUnknownJob
 	}
+	if ev.Event == evLost {
+		return nil // a recorder cannot claim the watchdog's verdict
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.applyEventLocked(ctx, ev)
@@ -139,7 +147,7 @@ func (b *Bot) applyEventLocked(ctx context.Context, ev recorderEvent) error {
 		} else {
 			transcribe = true
 		}
-	case evFailed:
+	case evFailed, evLost:
 		job.State, job.Error = jobFailed, ev.Error
 		job.Artifacts = ev.Artifacts
 		unindicate = true
@@ -153,7 +161,9 @@ func (b *Bot) applyEventLocked(ctx context.Context, ev recorderEvent) error {
 	// turn every redelivery into another note. A transient Zulip failure rolls
 	// the record back and the recorder's retry tries again.
 	job.LastEvent = ev.Event
-	job.Events = append(job.Events, ev.Event)
+	if ev.Event != evLost {
+		job.Events = append(job.Events, ev.Event)
+	}
 	if err := job.save(b.cfg.DataDir); err != nil {
 		slog.Error("saving the job failed", "job", job.ID, "err", err)
 		return err

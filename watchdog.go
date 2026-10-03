@@ -142,7 +142,7 @@ func (b *Bot) checkJob(ctx context.Context, job Job, now time.Time) {
 		if cur.WatchdogMisses < watchdogMaxMisses {
 			return
 		}
-		ev = recorderEvent{Event: evFailed, ID: cur.ID, Error: "lost"}
+		ev = recorderEvent{Event: evLost, ID: cur.ID, Error: "lost"}
 	}
 	// The event was lost (or the recorder is gone): handle the outcome as if it
 	// had arrived. A failure leaves the job watched and the next pass retries.
