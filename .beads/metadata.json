@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "zulip_recording_bot",
+  "project_id": "fa9c8ea3-fcfd-4602-98d3-7eccd7a2c1af"
+}
