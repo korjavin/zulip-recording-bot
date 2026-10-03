@@ -5,8 +5,7 @@ import (
 	"time"
 )
 
-// handler is the bot's inbound HTTP surface. The transcriber callback joins it
-// in a later change.
+// handler is the bot's inbound HTTP surface.
 func handler(b *Bot) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
@@ -14,6 +13,7 @@ func handler(b *Bot) http.Handler {
 		_, _ = w.Write([]byte(`{"status":"ok"}` + "\n"))
 	})
 	mux.HandleFunc("POST /events", b.serveEvents)
+	mux.HandleFunc("POST /notify", b.serveNotify)
 	return mux
 }
 

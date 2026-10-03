@@ -24,7 +24,8 @@ type Job struct {
 	State       string    `json:"state"`
 	Error       string    `json:"error,omitempty"`
 	LastEvent   string    `json:"last_event,omitempty"`
-	Events      []string  `json:"events,omitempty"` // every recorder event handled, for idempotence
+	Events      []string  `json:"events,omitempty"`  // every recorder event handled, for idempotence
+	Webhook     string    `json:"webhook,omitempty"` // handOffPending | handOffSent; empty = nothing to hand off
 
 	WatchdogMisses int `json:"watchdog_misses,omitempty"` // overdue checks in a row that found no recording
 

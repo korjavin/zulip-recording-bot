@@ -42,12 +42,15 @@ type Bot struct {
 
 	mu sync.Mutex     // serialises the check-and-claim of a job id
 	wg sync.WaitGroup // in-flight recorder requests; tests wait on it
+
+	kick chan struct{} // wakes the hand-off loop when a recording is ready
 }
 
 func newBot(cfg Config, z *Zulip) *Bot {
 	return &Bot{
-		cfg: cfg,
-		z:   z,
+		cfg:  cfg,
+		z:    z,
+		kick: make(chan struct{}, 1),
 		// Zulip's call button posts "[Join video call.](<base>/<room>)", so the raw
 		// content is enough. The room runs to the first character markdown or prose
 		// can put after it; "?" and "#" end it too, so a JWT or room password never

@@ -145,7 +145,7 @@ func (b *Bot) applyEventLocked(ctx context.Context, ev recorderEvent) error {
 		if ev.DurationS < float64(b.cfg.MinRecordingS) {
 			note = fmt.Sprintf("Recording too short (under %d s) — nothing to transcribe.", b.cfg.MinRecordingS)
 		} else {
-			transcribe = true
+			job.Webhook, transcribe = handOffPending, true
 		}
 	case evFailed, evLost:
 		job.State, job.Error = jobFailed, ev.Error
@@ -187,7 +187,7 @@ func (b *Bot) applyEventLocked(ctx context.Context, ev recorderEvent) error {
 		return err
 	}
 	if transcribe {
-		b.handOff(job)
+		b.kickHandOff()
 	}
 	slog.Info("recorder event", "job", job.ID, "event", ev.Event, "state", job.State, "error", job.Error)
 	return nil
@@ -228,12 +228,4 @@ func (b *Bot) failureNote(job Job) string {
 		outcome = "a partial recording was kept (job " + job.ID + "), no transcript."
 	}
 	return what + " — " + outcome
-}
-
-// handOff passes a finished recording to the transcriber.
-//
-// ponytail: a stub until the transcriber hand-off lands; the job record already
-// holds everything §5 needs.
-func (b *Bot) handOff(job Job) {
-	slog.Info("recording ready for transcription", "job", job.ID, "duration_s", job.DurationS)
 }

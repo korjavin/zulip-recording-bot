@@ -28,6 +28,8 @@ func main() {
 	defer stop()
 	bot := newBot(cfg, newZulip(cfg))
 	bot.startWatchdog(ctx)
+	// Not under bot.wg: a hand-off cut short stays pending and is resent at startup.
+	go bot.handOffLoop(ctx)
 	go func() {
 		// Bad Zulip credentials stop the service instead of leaving it half-up.
 		if err := bot.Run(ctx); err != nil {
