@@ -4,12 +4,15 @@ WORKDIR /src
 # dependency appears.
 COPY go.mod ./
 COPY *.go ./
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /zulip-recording-bot .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /zulip-recording-bot . && mkdir /data
 
 # distroless/static carries CA certificates and a nonroot user; no shell, no
 # browser, no audio tooling — the bot never touches audio.
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /zulip-recording-bot /zulip-recording-bot
+# The job state directory, owned by nonroot (65532); a fresh named volume
+# mounted here inherits that ownership.
+COPY --from=build --chown=65532:65532 /data /data
 ENV LISTEN_ADDR=:8080 DATA_DIR=/data
 EXPOSE 8080
 ENTRYPOINT ["/zulip-recording-bot"]
